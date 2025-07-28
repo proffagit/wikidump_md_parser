@@ -108,6 +108,21 @@ cd wikidump_md_parser
 chmod +x wikidump_xml_to_markdown_fast.py
 ```
 
+### Obtaining Wikipedia Dump Files
+Download the latest Wikipedia XML dump from the official Wikimedia dumps:
+- **English Wikipedia**: https://dumps.wikimedia.org/enwiki/
+- **Other Languages**: https://dumps.wikimedia.org/ (browse to your preferred language)
+
+Look for files named like `enwiki-YYYYMMDD-pages-articles.xml.bz2` - these contain the full article content. You'll need to extract the bz2 file before processing:
+
+```bash
+# Download (example - replace with current date)
+wget https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2
+
+# Extract
+bunzip2 enwiki-latest-pages-articles.xml.bz2
+```
+
 ## 📖 Usage
 
 ### Basic Usage
