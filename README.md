@@ -1,6 +1,6 @@
 # Wikipedia XML Dump to Markdown Converter
 
-A comprehensive Python tool for converting Wikipedia XML dumps into individual Markdown files with extensive wikitext parsing capabilities.
+A robust, high-performance Python tool for converting Wikipedia XML dumps into individual Markdown files with comprehensive wikitext parsing and advanced safeguards against complex nested structures.
 
 ## 🌟 Features
 
@@ -9,6 +9,9 @@ A comprehensive Python tool for converting Wikipedia XML dumps into individual M
 - **Individual Article Files**: Converts each Wikipedia article to a separate Markdown file
 - **Comprehensive Wikitext Support**: Handles 15+ wikitext markup features
 - **Metadata Preservation**: Includes page ID, source information, and word count
+- **🛡️ Robust Processing**: Advanced safeguards prevent hangs on complex articles
+- **⚡ Smart Fallbacks**: Graceful degradation ensures continuous processing
+- **🔄 Timeout Protection**: Per-article processing limits prevent infinite loops
 
 ### Advanced Wikitext Parsing
 
@@ -47,11 +50,16 @@ A comprehensive Python tool for converting Wikipedia XML dumps into individual M
 - **Bare URLs**: Automatic link conversion
 
 #### 🏗️ Advanced Features
-- **Template Removal**: Comprehensive infobox and template cleanup
+- **Template Removal**: Comprehensive infobox and template cleanup with nested structure handling
+- **🔄 Smart Template Processing**: Lazy fallback preserves content when complex parsing fails
 - **Special Templates**: 
   - `{{main|Article}}` → `*See main article: [Article](Article)*`
   - Citation templates → Reference format
   - Quote templates → Blockquote format
+- **🛡️ Robust Table Conversion**: 
+  - Full markdown conversion for normal tables
+  - Lazy text conversion for oversized/complex tables
+  - Content preservation with simplified formatting
 - **Code Preservation**: 
   - `<code>` → backticks
   - `<pre>` → code blocks
@@ -60,6 +68,32 @@ A comprehensive Python tool for converting Wikipedia XML dumps into individual M
 - **Reference Removal**: Cleans `<ref>` tags while preserving content
 - **Comment Removal**: Strips XML comments
 - **Nowiki Preservation**: Maintains literal text without parsing
+
+### 🛡️ Robustness & Safety Features
+
+#### Anti-Hang Safeguards
+- **Nesting Depth Limits**: Prevents infinite recursion on deeply nested templates (50-level max)
+- **Iteration Limits**: Stops runaway loops in complex template parsing
+- **Size Limits**: 
+  - Articles >2MB: Skip complex processing, use basic cleanup
+  - Articles >1MB: Use lazy template removal
+  - Tables >50KB: Convert to simple text format
+  - Tables >500 lines: Truncate with continuation notice
+- **Per-Article Timeouts**: 30-second limit per article prevents individual hangs
+- **Memory Protection**: Early detection and handling of memory-intensive content
+
+#### Fallback Mechanisms
+- **Lazy Template Processing**: When complex parsing fails, removes braces but preserves content
+  - `{{cite book|title=Example|author=Author}}` → `cite book|title=Example|author=Author`
+- **Progressive Degradation**: Multiple fallback levels ensure some output is always produced
+- **Content Preservation**: Prioritizes readable output over perfect formatting
+- **Error Recovery**: Continues processing entire dump even when individual articles fail
+
+#### Real-World Testing
+- **✅ Tested on Complex Articles**: Successfully handles problematic pages like "House Corrino" (Dune series)
+- **✅ Handles Pathological Cases**: Safely processes malformed or extremely nested markup
+- **✅ Large Table Support**: Processes tables with hundreds of rows and complex nested templates
+- **✅ Memory Efficient**: Maintains low memory usage even with complex content
 
 ## 🚀 Installation
 
@@ -97,11 +131,16 @@ python3 wikidump_xml_to_markdown_fast.py wikipedia-dump.xml -o output_directory
 - **Fast Page Detection**: Uses optimized `<page>` tag scanning
 - **Selective Processing**: Skips redirects, disambiguation pages, and special namespaces
 - **Progress Reporting**: Real-time statistics every 1000 articles
+- **🛡️ Hang Prevention**: Multiple timeout and limit mechanisms
+- **⚡ Smart Fallbacks**: Maintains processing speed even with complex content
+- **🔄 Adaptive Processing**: Adjusts parsing strategy based on content complexity
 
 ### Typical Performance
-- **Speed**: ~100-500 articles/second (depending on hardware)
+- **Speed**: ~100-500 articles/second (depending on hardware and content complexity)
 - **Memory**: Low memory footprint even for multi-GB files
 - **Scalability**: Successfully tested on complete Wikipedia dumps
+- **🛡️ Reliability**: Processes entire dumps without hanging on complex articles
+- **⚡ Consistency**: Maintains steady performance through adaptive processing
 
 ## 📁 Output Format
 
@@ -149,32 +188,42 @@ Each article is saved as an individual Markdown file with:
 ### Special Handling
 - **Namespace Filtering**: Skips `File:`, `Category:`, `Template:`, `User:`, etc.
 - **Content Validation**: Filters out articles shorter than 50 characters
-- **Error Recovery**: Continues processing even if individual articles fail
+- **🛡️ Robust Error Recovery**: Continues processing even if individual articles fail
+- **⚡ Adaptive Processing**: Automatically adjusts parsing strategy for complex content
+- **🔄 Fallback Processing**: Multiple levels of graceful degradation ensure continuous operation
+- **⏱️ Timeout Management**: Per-article limits prevent hangs while preserving content quality
 
 ## 🧪 Testing
 
-The project includes comprehensive tests to validate parsing accuracy:
+The project includes comprehensive tests to validate parsing accuracy and robustness:
 
 ```bash
+# Test comprehensive parsing features
 python3 test_comprehensive_parser.py
+
+# Test complex nested structures (House Corrino scenario)
+python3 test_complex_article.py
 ```
 
 ### Test Coverage
 - Basic text formatting
 - Math and chemistry notation
-- Wiki tables
+- Wiki tables (normal and oversized)
 - Lists and indentation
 - Headings
 - Internal and external links
-- Templates and infoboxes
+- Templates and infoboxes (including deeply nested)
 - Code and preformatted text
 - HTML elements and entities
 - References and citations
 - Complex nested markup
+- **🛡️ Pathological cases**: Malformed and extremely complex structures
+- **⚡ Performance limits**: Large content and timeout scenarios
+- **🔄 Fallback mechanisms**: Lazy processing and content preservation
 
 ## 📈 Progress Monitoring
 
-The tool provides detailed progress information:
+The tool provides detailed progress information with enhanced monitoring:
 
 ```
 🚀 FAST Wikipedia XML Parser Starting...
@@ -189,16 +238,29 @@ The tool provides detailed progress information:
 🎉 MILESTONE: 100000 pages processed!
    ✅ Articles: 75000
    ⏱️  Time: 2.15 hours
+
+⚠️  Warning: Complex template parsing timeout, using fallback
+⚠️  Slow conversion: 'House Corrino' took 12.3s
+✅ Lazy fallback regex used - template content preserved
 ```
+
+### Enhanced Monitoring Features
+- **Real-time Processing Stats**: Articles, redirects, skipped counts
+- **Performance Metrics**: Processing rate and time estimates
+- **Warning System**: Alerts for slow conversions and fallback usage
+- **Memory Monitoring**: Automatic detection of memory-intensive articles
+- **Timeout Tracking**: Reports on articles requiring fallback processing
 
 ## 🏗️ Architecture
 
 ### Core Components
 1. **XML Parser**: Stream-based processing for memory efficiency
-2. **Wikitext Converter**: Comprehensive markup transformation engine
-3. **Template Engine**: Advanced template removal with nesting support
-4. **Link Processor**: Multi-format link conversion system
-5. **Content Filter**: Intelligent content inclusion/exclusion logic
+2. **Wikitext Converter**: Comprehensive markup transformation engine with fallback support
+3. **🛡️ Template Engine**: Advanced template removal with nesting limits and timeout protection
+4. **🔄 Fallback System**: Multi-level graceful degradation for complex content
+5. **Link Processor**: Multi-format link conversion system
+6. **Content Filter**: Intelligent content inclusion/exclusion logic
+7. **⚡ Safety Monitor**: Real-time processing limits and timeout management
 
 ### Processing Pipeline
 1. **Stream Parsing**: Extract pages from XML

@@ -57,19 +57,46 @@ def clean_filename(title):
     return title
 
 
-def wikitext_to_markdown(wikitext):
+def wikitext_to_markdown(wikitext, timeout_seconds=30):
     """
     Convert wikitext markup to markdown with comprehensive parsing.
     Handles math, templates, tables, infoboxes, citations, and complex markup.
     Based on MediaWiki wikitext specification and WikiDump parsing guidelines.
+    
+    Args:
+        wikitext: The wikitext content to convert
+        timeout_seconds: Maximum time to spend on conversion (default: 30 seconds)
     """
     if not wikitext:
         return ""
     
+    start_time = time.time()
+    
+    # Early check for extremely large articles
+    if len(wikitext) > 2000000:  # 2MB limit
+        print(f"⚠️  Warning: Article extremely large ({len(wikitext)} chars), skipping complex processing")
+        # Return basic cleanup only
+        simple_text = re.sub(r'\{\{[^}]*\}\}', '', wikitext)  # Remove templates
+        simple_text = re.sub(r'<[^>]*>', '', simple_text)     # Remove HTML tags
+        simple_text = re.sub(r'\[\[[^]]*\]\]', '', simple_text)  # Remove links
+        return simple_text[:10000]  # Truncate to manageable size
+    
     text = wikitext
+    
+    # Timeout check helper
+    def check_timeout():
+        if time.time() - start_time > timeout_seconds:
+            print(f"⚠️  Warning: Article processing timeout ({timeout_seconds}s), using simplified conversion")
+            return True
+        return False
     
     # Step 1: Decode HTML entities first
     text = html.unescape(text)
+    
+    if check_timeout():
+        # Apply simple template removal to what we have so far and return it
+        partial_result = re.sub(r'\{\{([^}]*)\}\}', r'\1', text)  # Remove template braces, keep content
+        return partial_result[:5000]  # Return truncated simplified text
     
     # Step 2: Handle special preservation tags (nowiki, pre, code, math, etc.)
     preserved_blocks = {}
@@ -200,13 +227,24 @@ def wikitext_to_markdown(wikitext):
     # Step 3: Remove XML-style comments
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
     
+    if check_timeout():
+        # Apply simple template removal and return
+        simplified_result = re.sub(r'\{\{([^}]*)\}\}', r'\1', text)
+        return simplified_result[:5000]
+    
     # Step 4: Handle templates (complex nested structures) - ENHANCED
     # Remove infoboxes first (they start with {{ and contain | separators)
     def remove_complex_templates(text):
         """
         Advanced template removal with proper nesting support.
         Handles complex cases like nested templates, math within templates, etc.
+        Added safeguards to prevent infinite loops and excessive processing.
         """
+        # Early exit for very large texts to prevent memory issues
+        if len(text) > 1000000:  # 1MB limit
+            print(f"⚠️  Warning: Article too large ({len(text)} chars), using simple template processing")
+            return re.sub(r'\{\{([^}]*)\}\}', r'\1', text)  # Lazy: just remove the braces, keep content
+        
         # First pass: Handle special templates that might contain valuable content
         # Convert some citation templates to markdown-style references
         text = re.sub(r'\{\{cite\s+[^}]*\|?\s*title\s*=\s*([^|}]+)[^}]*\}\}', 
@@ -220,13 +258,24 @@ def wikitext_to_markdown(wikitext):
         text = re.sub(r'\{\{main\s*\|\s*([^|}]+)[^}]*\}\}', 
                      r'*See main article: [\1](\1)*', text, flags=re.IGNORECASE)
         
-        # Enhanced balanced brace removal with proper nesting
+        # Enhanced balanced brace removal with proper nesting and safeguards
         result = []
         i = 0
         brace_stack = []
+        max_iterations = len(text) * 2  # Safety limit
+        iteration_count = 0
+        max_nesting_depth = 50  # Prevent excessive nesting
         
-        while i < len(text):
+        while i < len(text) and iteration_count < max_iterations:
+            iteration_count += 1
+            
             if i < len(text) - 1 and text[i:i+2] == '{{':
+                # Check for excessive nesting depth
+                if len(brace_stack) >= max_nesting_depth:
+                    # Skip this template entirely - too deeply nested
+                    i += 2
+                    continue
+                    
                 if not brace_stack:  # Starting new template
                     template_start = i
                 brace_stack.append(i)
@@ -244,18 +293,52 @@ def wikitext_to_markdown(wikitext):
                     result.append(text[i])
                 i += 1
         
+        # If we hit the iteration limit, fall back to simple removal
+        if iteration_count >= max_iterations:
+            print(f"⚠️  Warning: Complex template parsing timeout, using fallback")
+            remaining_text = ''.join(result) + text[i:]
+            return re.sub(r'\{\{([^}]*)\}\}', r'\1', remaining_text)  # Lazy: just remove braces, keep content
+        
         return ''.join(result)
     
     text = remove_complex_templates(text)
+    
+    if check_timeout():
+        # Apply simple template removal to remaining text
+        final_result = re.sub(r'\{\{([^}]*)\}\}', r'\1', text)
+        return final_result[:5000]
     
     # Step 5: Handle tables (convert to markdown tables where possible) - ENHANCED
     def convert_wikitable(match):
         """
         Enhanced table conversion with better cell parsing and formatting.
         Handles complex table structures, rowspan/colspan attributes, and nested markup.
+        Added safeguards to prevent excessive processing time.
         """
         table_content = match.group(1)
+        
+        # Skip extremely large or complex tables - use lazy regex approach
+        if len(table_content) > 50000:  # 50KB limit for tables
+            # Lazy fallback: just clean up the table markup minimally
+            simple_content = re.sub(r'\{\{([^}]*)\}\}', r'\1', table_content)  # Remove template braces, keep content
+            simple_content = re.sub(r'\|\|', ' | ', simple_content)  # Convert table separators
+            simple_content = re.sub(r'^\|', '', simple_content, flags=re.MULTILINE)  # Remove leading pipes
+            simple_content = re.sub(r'\|-\s*', '\n', simple_content)  # Convert row separators to newlines
+            simple_content = re.sub(r'^\!\s*', '**', simple_content, flags=re.MULTILINE)  # Convert headers to bold
+            return '\n' + simple_content + '\n'
+        
         lines = table_content.split('\n')
+        
+        # Limit number of lines processed in a table - use lazy approach for very long tables
+        if len(lines) > 500:
+            # For very long tables, use simple text conversion instead of full markdown
+            truncated_content = '\n'.join(lines[:500])
+            simple_content = re.sub(r'\{\{([^}]*)\}\}', r'\1', truncated_content)  # Remove template braces, keep content
+            simple_content = re.sub(r'\|\|', ' | ', simple_content)  # Convert table separators
+            simple_content = re.sub(r'^\|', '', simple_content, flags=re.MULTILINE)  # Remove leading pipes
+            simple_content = re.sub(r'\|-\s*', '\n', simple_content)  # Convert row separators to newlines
+            simple_content = re.sub(r'^\!\s*', '**', simple_content, flags=re.MULTILINE)  # Convert headers to bold
+            return '\n' + simple_content + '\n... (table continues)\n'
         
         markdown_rows = []
         headers = []
@@ -345,6 +428,11 @@ def wikitext_to_markdown(wikitext):
     
     # Convert wiki tables to markdown
     text = re.sub(r'\{\|(.*?)\|\}', convert_wikitable, text, flags=re.DOTALL)
+    
+    if check_timeout():
+        # Apply simple template removal to any remaining templates
+        final_result = re.sub(r'\{\{([^}]*)\}\}', r'\1', text)
+        return final_result[:5000]
     
     # Step 6: Remove remaining complex markup
     # Remove file and image references with all their parameters
@@ -733,35 +821,51 @@ def parse_wikipedia_xml_fast(xml_file, output_dir="wikipedia_articles"):
 
 
 def process_article_fast(page_data, output_path):
-    """Process a single article and save as markdown - fast version"""
+    """Process a single article and save as markdown - fast version with error handling"""
     title = page_data.get('title', 'Untitled')
     text = page_data.get('text', '')
     page_id = page_data.get('id', 'unknown')
     
-    # Skip redirect pages
-    if text.lower().startswith('#redirect'):
-        return 'redirect'
-    
-    # Skip special namespace pages
-    if ':' in title:
-        namespace = title.split(':')[0]
-        if namespace in ['File', 'Category', 'Template', 'User', 'Wikipedia', 'Help', 'MediaWiki', 'Talk', 'User talk', 'Wikipedia talk', 'Module']:
+    try:
+        # Skip redirect pages
+        if text.lower().startswith('#redirect'):
+            return 'redirect'
+        
+        # Skip special namespace pages
+        if ':' in title:
+            namespace = title.split(':')[0]
+            if namespace in ['File', 'Category', 'Template', 'User', 'Wikipedia', 'Help', 'MediaWiki', 'Talk', 'User talk', 'Wikipedia talk', 'Module']:
+                return 'skipped'
+        
+        # Skip disambiguation pages
+        if '(disambiguation)' in title.lower():
+            return 'skipped'
+        
+        # Skip extremely large articles (likely to cause issues)
+        if len(text) > 3000000:  # 3MB limit
+            print(f"⚠️  Skipping very large article: '{title}' ({len(text)} chars)")
+            return 'skipped'
+        
+        # Create clean filename
+        filename = clean_filename(title) + '.md'
+        filepath = output_path / filename
+        
+        # Convert wikitext to markdown with timeout
+        start_conversion = time.time()
+        markdown_content = wikitext_to_markdown(text, timeout_seconds=30)
+        conversion_time = time.time() - start_conversion
+        
+        # Log slow conversions
+        if conversion_time > 10:
+            print(f"⚠️  Slow conversion: '{title}' took {conversion_time:.1f}s")
+        
+        # Skip very short articles
+        if len(markdown_content.strip()) < 50:
             return 'skipped'
     
-    # Skip disambiguation pages
-    if '(disambiguation)' in title.lower():
-        return 'skipped'
-    
-    # Create clean filename
-    filename = clean_filename(title) + '.md'
-    filepath = output_path / filename
-    
-    # Convert wikitext to markdown
-    markdown_content = wikitext_to_markdown(text)
-    
-    # Skip very short articles
-    if len(markdown_content.strip()) < 50:
-        return 'skipped'
+    except Exception as e:
+        print(f"❌ Error processing article '{title}': {e}")
+        return 'error'
     
     # Create markdown file with metadata
     markdown_output = f"""# {title}
