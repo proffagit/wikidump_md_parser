@@ -309,6 +309,39 @@ def wikitext_to_markdown(wikitext, timeout_seconds=30):
         return final_result[:5000]
     
     # Step 5: Handle tables (convert to markdown tables where possible) - ENHANCED
+    def clean_table_cell(content):
+        """Clean a table cell of wikitext markup and HTML attributes"""
+        if not content:
+            return ''
+        
+        # Split by | to separate attributes from content
+        parts = content.split('|')
+        if len(parts) > 1:
+            # Everything after the first | is the actual content
+            cell_content = '|'.join(parts[1:])
+        else:
+            # No | separator, whole thing is content
+            cell_content = content
+        
+        # Remove HTML attributes from the content part
+        cell_content = re.sub(r'scope="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'rowspan="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'colspan="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'style="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'class="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'align="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'valign="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'width="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        cell_content = re.sub(r'height="[^"]*"', '', cell_content, flags=re.IGNORECASE)
+        
+        # Basic wikitext cleanup
+        cell_content = re.sub(r"'''(.*?)'''", r'**\1**', cell_content)  # Bold
+        cell_content = re.sub(r"''(.*?)''", r'*\1*', cell_content)     # Italic
+        cell_content = re.sub(r'\[\[([^|\]]+)\|([^\]]+)\]\]', r'[\2](\1)', cell_content)  # Links
+        cell_content = re.sub(r'\[\[([^\]]+)\]\]', r'[\1](\1)', cell_content)  # Simple links
+        
+        return cell_content.strip()
+    
     def convert_wikitable(match):
         """
         Enhanced table conversion with better cell parsing and formatting.
@@ -342,85 +375,87 @@ def wikitext_to_markdown(wikitext, timeout_seconds=30):
         
         markdown_rows = []
         headers = []
+        data_rows = []
         current_row = []
-        is_in_header = False
         
         for line in lines:
             line = line.strip()
             if not line or line.startswith('{|') or line.startswith('|}'):
                 continue
             
-            # Table attributes/styling (ignore)
+            # Table row separator (ignore styling)
             if line.startswith('|-'):
-                if current_row and not is_in_header:
-                    # Pad cells to match header count
-                    while len(current_row) < len(headers):
-                        current_row.append('')
-                    markdown_rows.append('| ' + ' | '.join(current_row) + ' |')
+                if current_row:
+                    data_rows.append(current_row)
                 current_row = []
                 continue
             
             # Table header row (!)
             if line.startswith('!'):
-                is_in_header = True
+                # Extract header content after removing attributes
+                header_content = line[1:].strip()
+                
                 # Handle multiple headers in one line
-                header_line = line[1:].strip()
-                if '!!' in header_line:
-                    new_headers = [h.strip() for h in header_line.split('!!')]
+                if '!!' in header_content:
+                    header_cells = header_content.split('!!')
                 else:
-                    new_headers = [header_line]
+                    header_cells = [header_content]
                 
-                # Clean headers of any remaining wikitext
-                clean_headers = []
-                for header in new_headers:
-                    # Remove style attributes
-                    header = re.sub(r'style="[^"]*"', '', header, flags=re.IGNORECASE)
-                    header = re.sub(r'class="[^"]*"', '', header, flags=re.IGNORECASE)
-                    # Remove pipes and clean up
-                    header = re.sub(r'\|.*$', '', header).strip()
-                    if header:
-                        clean_headers.append(header)
-                
-                headers.extend(clean_headers)
-                
-                if headers:
-                    markdown_rows.append('| ' + ' | '.join(headers) + ' |')
-                    markdown_rows.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
-                is_in_header = False
+                # Clean each header cell
+                for header_cell in header_cells:
+                    # Remove all HTML attributes using a more robust approach
+                    clean_header = clean_table_cell(header_cell)
+                    if clean_header.strip():
+                        headers.append(clean_header.strip())
                 continue
             
             # Table data row (|)
-            if line.startswith('|') and not is_in_header:
+            if line.startswith('|'):
+                # Extract cell content after removing attributes
+                cell_content = line[1:].strip()
+                
                 # Handle multiple cells in one line
-                cell_line = line[1:].strip()
-                if '||' in cell_line:
-                    new_cells = [c.strip() for c in cell_line.split('||')]
+                if '||' in cell_content:
+                    cell_parts = cell_content.split('||')
                 else:
-                    new_cells = [cell_line]
+                    cell_parts = [cell_content]
                 
-                # Clean cells of wikitext and formatting
-                clean_cells = []
-                for cell in new_cells:
-                    # Remove style attributes
-                    cell = re.sub(r'style="[^"]*"', '', cell, flags=re.IGNORECASE)
-                    cell = re.sub(r'class="[^"]*"', '', cell, flags=re.IGNORECASE)
-                    # Remove cell attributes (everything after first |)
-                    cell = re.sub(r'\|.*?(?=\w)', '', cell).strip()
-                    # Basic wikitext cleanup for cells
-                    cell = re.sub(r"'''(.*?)'''", r'**\1**', cell)  # Bold
-                    cell = re.sub(r"''(.*?)''", r'*\1*', cell)     # Italic
-                    cell = re.sub(r'\[\[([^|\]]+)\|([^\]]+)\]\]', r'[\2](\1)', cell)  # Links
-                    cell = re.sub(r'\[\[([^\]]+)\]\]', r'[\1](\1)', cell)  # Simple links
-                    if cell:
-                        clean_cells.append(cell)
-                
-                current_row.extend(clean_cells)
+                # Clean each cell
+                for cell_part in cell_parts:
+                    clean_cell = clean_table_cell(cell_part)
+                    current_row.append(clean_cell.strip())
         
-        # Handle last row if exists
-        if current_row and headers:
-            while len(current_row) < len(headers):
-                current_row.append('')
-            markdown_rows.append('| ' + ' | '.join(current_row) + ' |')
+        # Add final row if exists
+        if current_row:
+            data_rows.append(current_row)
+        
+        # Build markdown table
+        if headers:
+            # Create header row
+            markdown_rows.append('| ' + ' | '.join(headers) + ' |')
+            markdown_rows.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
+            
+            # Add data rows, padding to match header count
+            for row in data_rows:
+                while len(row) < len(headers):
+                    row.append('')
+                # Truncate if row is longer than headers
+                row = row[:len(headers)]
+                markdown_rows.append('| ' + ' | '.join(row) + ' |')
+        
+        elif data_rows:
+            # No headers, but we have data - create a simple table
+            max_cols = max(len(row) for row in data_rows) if data_rows else 0
+            if max_cols > 0:
+                # Create generic headers
+                markdown_rows.append('| ' + ' | '.join([f'Col {i+1}' for i in range(max_cols)]) + ' |')
+                markdown_rows.append('| ' + ' | '.join(['---'] * max_cols) + ' |')
+                
+                # Add data rows
+                for row in data_rows:
+                    while len(row) < max_cols:
+                        row.append('')
+                    markdown_rows.append('| ' + ' | '.join(row) + ' |')
         
         if markdown_rows:
             return '\n' + '\n'.join(markdown_rows) + '\n'
@@ -428,6 +463,25 @@ def wikitext_to_markdown(wikitext, timeout_seconds=30):
     
     # Convert wiki tables to markdown
     text = re.sub(r'\{\|(.*?)\|\}', convert_wikitable, text, flags=re.DOTALL)
+    
+    # ADDITIONAL: Remove any remaining malformed table syntax that wasn't caught
+    # Remove scope attributes and other HTML table remnants
+    text = re.sub(r'scope="[^"]*"', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'rowspan="[^"]*"', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'colspan="[^"]*"', '', text, flags=re.IGNORECASE)
+    
+    # Remove lines that are mostly table markup artifacts
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Skip lines that are mostly HTML table attributes
+        stripped_line = line.strip()
+        if (stripped_line.startswith('|') and 
+            ('scope=' in stripped_line or 'rowspan=' in stripped_line or 'colspan=' in stripped_line) and
+            len(re.sub(r'[|\s-]', '', stripped_line)) < 10):
+            continue  # Skip this line as it's mostly table markup
+        cleaned_lines.append(line)
+    text = '\n'.join(cleaned_lines)
     
     if check_timeout():
         # Apply simple template removal to any remaining templates
@@ -491,6 +545,18 @@ def wikitext_to_markdown(wikitext, timeout_seconds=30):
             content = match.group(2).strip()
             if content:  # Only add non-empty content
                 converted_lines.append('  ' * level + '1. ' + content)
+        # Handle mixed ordered list with sub-items (#*) - Wikipedia specific syntax
+        elif re.match(r'^(#{1,}\*+)\s+(.+)$', stripped_line):
+            match = re.match(r'^(#{1,}\*+)\s+(.+)$', stripped_line)
+            prefix = match.group(1)
+            content = match.group(2).strip()
+            # Count # symbols for base level, * symbols add to indentation
+            hash_count = len([c for c in prefix if c == '#'])
+            star_count = len([c for c in prefix if c == '*'])
+            level = hash_count - 1 + star_count  # Combine both levels
+            if content:  # Only add non-empty content
+                # Use bullet points for sub-items in ordered lists
+                converted_lines.append('  ' * level + '- ' + content)
         # Handle definition lists - IMPROVED (apply bold formatting to terms)
         elif re.match(r'^;\s*(.*?)(?::\s*(.*))?$', stripped_line):
             match = re.match(r'^;\s*(.*?)(?::\s*(.*))?$', stripped_line)
@@ -558,9 +624,12 @@ def wikitext_to_markdown(wikitext, timeout_seconds=30):
     text = re.sub(r'\[\[([a-z]{2,3}):([^|\]]+)\|([^\]]+)\]\]', r'[\3](https://\1.wikipedia.org/wiki/\2)', text)
     text = re.sub(r'\[\[([a-z]{2,3}):([^\]]+)\]\]', r'[\2](https://\1.wikipedia.org/wiki/\2)', text)
     
-    # Step 12: Remove reference tags and citations
+    # Step 12: Remove reference tags and citations - ENHANCED
     text = re.sub(r'<ref[^>]*>.*?</ref>', '', text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<ref[^>]*/?>', '', text, flags=re.IGNORECASE)
+    # Remove any remaining standalone ref tags
+    text = re.sub(r'</ref>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<ref>', '', text, flags=re.IGNORECASE)
     
     # Step 13: Handle special characters and entities FIRST (before HTML tag removal)
     # Convert common HTML entities (but preserve some for display)
