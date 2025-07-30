@@ -7,6 +7,7 @@ A robust, high-performance Python tool for converting Wikipedia XML dumps into i
 ### Core Functionality
 - **Fast XML Parsing**: Efficiently processes large Wikipedia XML dump files (multi-GB)
 - **Individual Article Files**: Converts each Wikipedia article to a separate Markdown file
+- **Database Storage Option**: Store articles in SQLite database instead of individual files
 - **Comprehensive Wikitext Support**: Handles 15+ wikitext markup features
 - **Metadata Preservation**: Includes page ID, source information, and word count
 - **🛡️ Robust Processing**: Advanced safeguards prevent hangs on complex articles
@@ -135,9 +136,19 @@ python3 wikidump_xml_to_markdown_fast.py path/to/wikipedia-dump.xml
 python3 wikidump_xml_to_markdown_fast.py wikipedia-dump.xml -o output_directory
 ```
 
+### Database Storage Mode
+```bash
+# Store articles in SQLite database instead of individual files
+python3 wikidump_xml_to_markdown_fast.py wikipedia-dump.xml --database
+
+# Custom database path
+python3 wikidump_xml_to_markdown_fast.py wikipedia-dump.xml -o articles.db --database
+```
+
 ### Command Line Options
 - `xml_file`: Path to Wikipedia XML dump file (required)
-- `-o, --output`: Output directory for markdown files (default: `wikipedia_articles`)
+- `-o, --output`: Output directory for markdown files or database path (default: `wikipedia_articles`)
+- `--database`: Enable database storage mode - stores articles in SQLite database instead of individual files
 
 ## 📊 Performance
 
@@ -159,6 +170,7 @@ python3 wikidump_xml_to_markdown_fast.py wikipedia-dump.xml -o output_directory
 
 ## 📁 Output Format
 
+### File-based Storage (Default)
 Each article is saved as an individual Markdown file with:
 
 ```markdown
@@ -173,11 +185,52 @@ Each article is saved as an individual Markdown file with:
 [Converted article content in Markdown format]
 ```
 
-### File Naming
+#### File Naming
 - Article titles are cleaned for filesystem compatibility
 - Invalid characters replaced with underscores
 - Length limited to 200 characters
 - Extension: `.md`
+
+### Database Storage (--database flag)
+When using the `--database` flag, articles are stored in a SQLite database with the following schema:
+
+```sql
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content_size INTEGER,
+    content BLOB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(page_id)
+);
+```
+
+#### Database Benefits
+- **Efficient Storage**: Reduced file system overhead for large datasets
+- **Easy Querying**: SQL-based article retrieval and analysis
+- **Metadata Access**: Built-in content size and timestamp tracking
+- **Atomic Operations**: Reliable storage with transaction support
+- **Scalability**: Better performance with millions of articles
+
+#### Accessing Database Content
+```python
+import sqlite3
+
+# Connect to database
+conn = sqlite3.connect('articles.db')
+cursor = conn.cursor()
+
+# Find articles by title
+cursor.execute("SELECT title, content FROM articles WHERE title LIKE ?", ('%quantum%',))
+
+# Get article content as text
+for title, content_blob in cursor.fetchall():
+    content = content_blob.decode('utf-8')
+    print(f"Title: {title}")
+    print(content[:200] + "...")
+```
 
 ## 🔧 Processing Details
 
@@ -240,6 +293,7 @@ python3 test_complex_article.py
 
 The tool provides detailed progress information with enhanced monitoring:
 
+### File Storage Mode
 ```
 🚀 FAST Wikipedia XML Parser Starting...
 📁 Input file: enwiki-latest-pages-articles.xml
@@ -253,7 +307,28 @@ The tool provides detailed progress information with enhanced monitoring:
 🎉 MILESTONE: 100000 pages processed!
    ✅ Articles: 75000
    ⏱️  Time: 2.15 hours
+```
 
+### Database Storage Mode
+```
+🚀 FAST Wikipedia XML Parser Starting (DATABASE MODE)...
+📁 Input file: enwiki-latest-pages-articles.xml
+📊 File size: 18.45 GB
+💾 Database storage: articles will be stored in database
+💾 Initializing database: articles.db
+
+📖 Read 1M lines, found 45123 articles so far... (12.3s)
+📈 PROGRESS: 50000 articles, 12000 redirects, 8000 skipped (487.2/sec)
+   📄 Latest: 'Quantum mechanics in popular culture...'
+
+🎊 PROCESSING COMPLETE! 🎊
+   ✅ Articles successfully converted: 75000
+   💾 Storage: Database (articles stored in SQLite database)
+   💾 Database connection closed
+```
+
+### Monitoring Features
+```
 ⚠️  Warning: Complex template parsing timeout, using fallback
 ⚠️  Slow conversion: 'House Corrino' took 12.3s
 ✅ Lazy fallback regex used - template content preserved
@@ -309,6 +384,7 @@ This project is open source. Please check the license file for details.
 - `xml.etree.ElementTree`: XML processing
 - `re`: Regular expression operations
 - `html`: HTML entity decoding
+- `sqlite3`: Database storage (for --database mode)
 - `pathlib`: File system operations
 - `argparse`: Command line parsing
 

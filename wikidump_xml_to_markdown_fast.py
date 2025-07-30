@@ -42,6 +42,7 @@ import re
 import sys
 import time
 import html
+import sqlite3
 from pathlib import Path
 
 
@@ -55,6 +56,29 @@ def clean_filename(title):
     if len(title) > 200:
         title = title[:200]
     return title
+
+
+def init_database(db_path):
+    """Initialize the SQLite database for storing articles"""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Create articles table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            page_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_size INTEGER,
+            content BLOB NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(page_id)
+        )
+    ''')
+    
+    conn.commit()
+    return conn
 
 
 def wikitext_to_markdown(wikitext, timeout_seconds=30):
@@ -725,18 +749,25 @@ def wikitext_to_markdown(wikitext, timeout_seconds=30):
     return text
 
 
-def parse_wikipedia_xml_fast(xml_file, output_dir="wikipedia_articles"):
+def parse_wikipedia_xml_fast(xml_file, output_dir="wikipedia_articles", db_conn=None):
     """Fast parsing focusing only on page content"""
     
-    # Create output directory
-    output_path = Path(output_dir)
-    output_path.mkdir(exist_ok=True)
-    
-    print(f"🚀 FAST Wikipedia XML Parser Starting...")
-    print(f"📁 Input file: {xml_file}")
-    print(f"📊 File size: {os.path.getsize(xml_file) / (1024**3):.2f} GB")
-    print(f"📂 Output directory: {output_path.absolute()}")
-    print("⚡ Using optimized parsing - looking for <page> tags only...\n")
+    if db_conn:
+        print(f"🚀 FAST Wikipedia XML Parser Starting (DATABASE MODE)...")
+        print(f"📁 Input file: {xml_file}")
+        print(f"📊 File size: {os.path.getsize(xml_file) / (1024**3):.2f} GB")
+        print(f"💾 Database storage: articles will be stored in database")
+        print("⚡ Using optimized parsing - looking for <page> tags only...\n")
+    else:
+        # Create output directory
+        output_path = Path(output_dir)
+        output_path.mkdir(exist_ok=True)
+        
+        print(f"🚀 FAST Wikipedia XML Parser Starting...")
+        print(f"📁 Input file: {xml_file}")
+        print(f"📊 File size: {os.path.getsize(xml_file) / (1024**3):.2f} GB")
+        print(f"📂 Output directory: {output_path.absolute()}")
+        print("⚡ Using optimized parsing - looking for <page> tags only...\n")
     
     article_count = 0
     redirect_count = 0
@@ -783,7 +814,11 @@ def parse_wikipedia_xml_fast(xml_file, output_dir="wikipedia_articles"):
                 # End of page
                 if '</page>' in line and in_page:
                     if 'title' in current_page and 'text' in current_page and 'id' in current_page:
-                        result = process_article_fast(current_page, output_path)
+                        if db_conn:
+                            result = process_article_fast(current_page, None, db_conn)
+                        else:
+                            result = process_article_fast(current_page, output_path)
+                        
                         if result == 'success':
                             article_count += 1
                         elif result == 'redirect':
@@ -875,7 +910,10 @@ def parse_wikipedia_xml_fast(xml_file, output_dir="wikipedia_articles"):
         print(f"   📖 Total lines processed: {line_count:,}")
         print(f"   ⏱️  Total time: {elapsed_total/3600:.2f} hours")
         print(f"   🚀 Average rate: {(article_count)/elapsed_total:.1f} articles/sec")
-        print(f"   📂 Output directory: {output_path.absolute()}")
+        if db_conn:
+            print(f"   💾 Storage: Database (articles stored in SQLite database)")
+        else:
+            print(f"   📂 Output directory: {output_path.absolute()}")
         
     except KeyboardInterrupt:
         elapsed = time.time() - start_time
@@ -889,7 +927,7 @@ def parse_wikipedia_xml_fast(xml_file, output_dir="wikipedia_articles"):
         sys.exit(1)
 
 
-def process_article_fast(page_data, output_path):
+def process_article_fast(page_data, output_path, db_conn=None):
     """Process a single article and save as markdown - fast version with error handling"""
     title = page_data.get('title', 'Untitled')
     text = page_data.get('text', '')
@@ -917,7 +955,6 @@ def process_article_fast(page_data, output_path):
         
         # Create clean filename
         filename = clean_filename(title) + '.md'
-        filepath = output_path / filename
         
         # Convert wikitext to markdown with timeout
         start_conversion = time.time()
@@ -949,11 +986,31 @@ def process_article_fast(page_data, output_path):
 """
     
     try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(markdown_output)
+        if db_conn:
+            # Store in database
+            cursor = db_conn.cursor()
+            content_blob = markdown_output.encode('utf-8')
+            content_size = len(content_blob)
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO articles 
+                (page_id, title, filename, content_size, content) 
+                VALUES (?, ?, ?, ?, ?)
+            ''', (page_id, title, filename, content_size, content_blob))
+            
+            db_conn.commit()
+        else:
+            # Store as file
+            filepath = output_path / filename
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(markdown_output)
+        
         return 'success'
     except Exception as e:
-        print(f"❌ Error writing file {filepath}: {e}")
+        if db_conn:
+            print(f"❌ Error storing article '{title}' in database: {e}")
+        else:
+            print(f"❌ Error writing file for article '{title}': {e}")
         return 'error'
 
 
@@ -968,7 +1025,12 @@ def main():
     parser.add_argument(
         '-o', '--output',
         default='wikipedia_articles',
-        help='Output directory for markdown files (default: wikipedia_articles)'
+        help='Output directory for markdown files or database path when using --database (default: wikipedia_articles)'
+    )
+    parser.add_argument(
+        '--database',
+        action='store_true',
+        help='Enable database storage mode (stores articles in a database instead of files)'
     )
     
     args = parser.parse_args()
@@ -978,8 +1040,24 @@ def main():
         print(f"Error: File '{args.xml_file}' not found.")
         sys.exit(1)
     
-    # Parse the XML file with fast method
-    parse_wikipedia_xml_fast(args.xml_file, args.output)
+    # Handle database mode
+    db_conn = None
+    if args.database:
+        db_path = args.output + '.db' if not args.output.endswith('.db') else args.output
+        print(f"💾 Initializing database: {db_path}")
+        db_conn = init_database(db_path)
+    
+    try:
+        # Parse the XML file with fast method
+        if db_conn:
+            parse_wikipedia_xml_fast(args.xml_file, args.output, db_conn)
+        else:
+            parse_wikipedia_xml_fast(args.xml_file, args.output)
+    finally:
+        # Close database connection if it was opened
+        if db_conn:
+            db_conn.close()
+            print(f"💾 Database connection closed")
 
 
 if __name__ == '__main__':
